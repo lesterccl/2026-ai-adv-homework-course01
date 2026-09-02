@@ -12,6 +12,8 @@
 YYYY-MM-DD-<slug>.md
 ```
 
+計畫文件結構為 **User Story → Spec → Tasks**（見 [TEMPLATE.md](./TEMPLATE.md)）。
+
 `<slug>` 用 kebab-case 簡短描述，例如：
 
 - `2026-09-02-backlog.md`
@@ -33,7 +35,7 @@ YYYY-MM-DD-<slug>.md
              │
 ④ 回寫    把成果同步到主題文件（見下表）
              │
-⑤ 結卡    計劃檔頂端狀態改為「完成」，附完成日期
+⑤ 結卡    狀態改為「完成（YYYY-MM-DD）」，並 git mv 到 archive/
 ```
 
 ## ④ 回寫對照表
@@ -42,6 +44,7 @@ YYYY-MM-DD-<slug>.md
 
 | 這次改了什麼 | 要更新 |
 |---|---|
+| 任何改動（一律） | [CHANGELOG.md](../CHANGELOG.md) 補一列 |
 | 新增/移除功能、功能狀態變化 | [FEATURES.md](../FEATURES.md) 的總表與 §7 缺口清單 |
 | 新增目錄、新增模組、資料表變動、請求流程變動 | [ARCHITECTURE.md](../ARCHITECTURE.md) |
 | 建立新慣例、或釐清了既有慣例、或修掉某項技術債 | [DEVELOPMENT.md](../DEVELOPMENT.md)（含 §15 技術債表） |
@@ -60,7 +63,11 @@ YYYY-MM-DD-<slug>.md
 > 狀態：未開始 | 進行中 | 完成（YYYY-MM-DD） | 擱置（原因）
 ```
 
-已完成的計劃**保留不刪**，它是這個專案的開發紀錄。
+已完成的計畫**移到 `archive/` 保留不刪**，它是這個專案的開發紀錄：
+
+```bash
+git mv docs/plans/2026-09-10-admin-order-status.md docs/plans/archive/
+```
 
 ---
 

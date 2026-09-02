@@ -337,3 +337,53 @@ async function loadCart() {
 - [ ] 沒有殘留 `console.log`、TODO、註解掉的舊碼
 - [ ] `git status` 沒有意外檔案（特別是 `database.sqlite*`、`public/css/output.css` 應該被 ignore）
 - [ ] 對照 [FEATURES.md](./FEATURES.md) 更新功能狀態；有新測試則更新 [TESTING.md](./TESTING.md)
+
+---
+
+## 17. 新增東西的步驟
+
+| 要做的事 | 步驟 |
+|---|---|
+| **新增 API 端點** | ① 在對應的 `src/routes/xxxRoutes.js` 加 handler（箭頭函式）② 正上方緊貼補 `@openapi` 區塊 ③ `tests/xxx.test.js` 補測試 ④ `npm run openapi` 確認產得出來 |
+| **新增整組 API 資源** | ① 新建 `src/routes/xxxRoutes.js`，`const router = express.Router()` ② 在 `app.js` 的 API 區塊 `app.use('/api/xxx', require('./src/routes/xxxRoutes'))`（**務必在 404 handler 之前**）③ 新建 `tests/xxx.test.js` ④ **把新測試檔加進 `vitest.config.js` 的 `sequence.files`** |
+| **新增 middleware** | ① 新建 `src/middleware/xxxMiddleware.js`，用具名 `function` 宣告、`module.exports = xxxMiddleware` ② 全域的掛在 `app.js`；單一路由群組的用 `router.use()` ③ 需要 `req.user` 的必須掛在 `authMiddleware` 之後 |
+| **新增資料表 / 欄位** | ① 改 `src/database.js` 的 `initializeDatabase()`（`CREATE TABLE IF NOT EXISTS`、加 CHECK 約束）② **刪 DB 重建**：`rm -f database.sqlite database.sqlite-shm database.sqlite-wal` ③ 沒有 migration 機制，既有 DB 不會自動更新 |
+| **新增前台頁面** | 三檔同步：`pageRoutes.js` 加 route（用 `renderFront()`、帶 `pageScript`）＋ `views/pages/<name>.ejs` ＋ `public/js/pages/<name>.js` |
+| **新增後台頁面** | 同上但用 `renderAdmin()`、樣板放 `views/pages/admin/`，並在 `views/partials/admin-sidebar.ejs` 補選單 |
+| **新增色票 / 樣式 token** | 改 `public/css/input.css` 的 `@theme`，然後 `npm run css:build`。**不要改 `output.css`** |
+| **跨路由共用的商業邏輯** | **目前沒有 `services/` 層**。單一路由檔內用區域 `function`（如 `cartRoutes.js` 的 `dualAuth`）；真要跨檔共用再新建 `src/services/` —— 屬架構決策，先跟 user 確認 |
+
+---
+
+## 18. 環境變數
+
+`.env`（由 `.env.example` 複製）在 `app.js:1` 經 `dotenv` 載入。
+
+| 變數 | 用途 | 必要性 | 預設值 |
+|---|---|---|---|
+| `JWT_SECRET` | 簽發／驗證 JWT | **必要** | 無 —— 缺少時 `server.js:7` 直接 `process.exit(1)` |
+| `PORT` | 監聽埠 | 選填 | `3001` |
+| `FRONTEND_URL` | CORS 允許來源 | 選填 | `http://localhost:3001` |
+| `ADMIN_EMAIL` | 種子管理員帳號 | 選填 | `admin@hexschool.com` |
+| `ADMIN_PASSWORD` | 種子管理員密碼 | 選填 | `12345678` |
+| `NODE_ENV` | 設為 `test` 時 bcrypt saltRounds 降為 1 加速測試 | 選填 | 未設（saltRounds = 10） |
+| `BASE_URL` | 宣告於 `.env.example`，**程式碼未引用** | 無作用 | — |
+| `ECPAY_MERCHANT_ID` / `ECPAY_HASH_KEY` / `ECPAY_HASH_IV` / `ECPAY_ENV` | 宣告於 `.env.example`，**程式碼完全未引用**（付款是本地模擬） | 無作用 | — |
+
+`.env` 已 gitignore 並列入 `.claude/settings.json` 的 deny 規則，**agent 讀不到也寫不了**。需要知道有哪些變數請讀 `.env.example`。
+
+---
+
+## 19. 計畫歸檔流程
+
+功能開發一律先在 `docs/plans/` 開一份計畫，完成後歸檔。
+
+1. **命名格式**：`YYYY-MM-DD-<feature-name>.md`（kebab-case），例如 `2026-09-10-admin-order-status.md`。可用 `/plan-new <slug>` 指令自動產生。
+2. **文件結構**：**User Story → Spec → Tasks**，範本見 [`docs/plans/TEMPLATE.md`](./plans/TEMPLATE.md)。
+3. **功能完成後**：把計畫檔移至 `docs/plans/archive/`
+   ```bash
+   git mv docs/plans/2026-09-10-admin-order-status.md docs/plans/archive/
+   ```
+4. **更新** [`docs/FEATURES.md`](./FEATURES.md)（功能狀態總表與缺口清單）**和** [`docs/CHANGELOG.md`](./CHANGELOG.md)（在 `[Unreleased]` 或當日日期下補一列）。
+
+架構有變動就同步更新 `ARCHITECTURE.md`；建立了新慣例就更新本檔；新增測試就更新 `TESTING.md`。完整對照表見 [`docs/plans/README.md`](./plans/README.md)。

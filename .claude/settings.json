@@ -1,0 +1,194 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test)",
+      "Bash(npm run:*)",
+      "Bash(npx vitest:*)",
+      "Bash(node --version)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git remote:*)",
+      "Bash(git ls-remote:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git check-ignore:*)",
+      "Bash(ls:*)",
+      "Bash(pwd)",
+      "Bash(wc:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(find:*)",
+      "Bash(jq:*)",
+      "Bash(sed -n:*)",
+      "Bash(du:*)",
+      "Bash(df:*)",
+      "Bash(curl -s -o /dev/null -w:*)",
+      "Bash(curl -s http://localhost:*)",
+      "Bash(curl -s localhost:*)",
+      "Read(src/**)",
+      "Read(tests/**)",
+      "Read(views/**)",
+      "Read(public/**)",
+      "Read(docs/**)",
+      "Read(.claude/**)",
+      "Read(*.js)",
+      "Read(*.json)",
+      "Read(*.md)",
+      "Edit(src/**)",
+      "Edit(tests/**)",
+      "Edit(views/**)",
+      "Edit(docs/**)",
+      "Write(src/**)",
+      "Write(tests/**)",
+      "Write(views/**)",
+      "Write(docs/**)",
+      "Edit(~/.npm/**)",
+      "Read(~/.npm/**)",
+      "Write(~/Library/pnpm/**)",
+      "Edit(~/Library/pnpm/**)",
+      "Read(~/Library/pnpm/**)"
+    ],
+    "ask": [
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git checkout:*)",
+      "Bash(git restore:*)",
+      "Bash(git stash:*)",
+      "Bash(git merge:*)",
+      "Bash(git rebase:*)",
+      "Bash(gh:*)",
+      "Bash(npm install:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(npm i:*)",
+      "Bash(npx:*)",
+      "Bash(rm:*)",
+      "Bash(mv:*)",
+      "Bash(cp:*)",
+      "Bash(chmod:*)",
+      "Bash(kill:*)",
+      "Bash(pkill:*)",
+      "Edit(package.json)",
+      "Edit(package-lock.json)",
+      "Edit(vitest.config.js)",
+      "Edit(app.js)",
+      "Edit(server.js)",
+      "Edit(.gitignore)",
+      "Edit(.claude/**)",
+      "Write(.claude/**)",
+      "Edit(public/css/input.css)",
+      "Write(public/**)"
+    ],
+    "deny": [
+      "Read(.env)",
+      "Read(.env.local)",
+      "Read(.env.production)",
+      "Read(**/.env)",
+      "Edit(.env)",
+      "Edit(.env.local)",
+      "Edit(.env.production)",
+      "Write(.env)",
+      "Write(.env.local)",
+      "Write(.env.production)",
+      "Read(package-lock.json)",
+      "Edit(public/css/output.css)",
+      "Write(public/css/output.css)",
+      "Read(database.sqlite)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push upstream:*)",
+      "Bash(git commit --no-verify:*)",
+      "Bash(git add -A:*)",
+      "Bash(git add --all:*)",
+      "Bash(sudo:*)",
+      "Bash(git push:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(rm -rf:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Read|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/pretooluse_guard.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/protect-files.sh\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/auto-test.sh\""
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/compact-reminder.sh\""
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "osascript -e 'display notification \"等待你的確認\" with title \"Claude Code · 花漾生活\"'"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "osascript -e 'display notification \"任務完成\" with title \"Claude Code · 花漾生活\"' && afplay /System/Library/Sounds/Glass.aiff"
+          }
+        ]
+      }
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true,
+    "network": {
+      "allowLocalBinding": true,
+      "allowedDomains": [
+        "registry.npmjs.org",
+        "*.npmjs.org",
+        "*.github.com",
+        "github.com",
+        "*.githubusercontent.com",
+        "registry.yarnpkg.com",
+        "localhost:*"
+      ]
+    }
+  }
+}

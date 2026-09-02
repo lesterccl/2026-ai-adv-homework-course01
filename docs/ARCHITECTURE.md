@@ -82,6 +82,22 @@ errorHandler       只兜底未預期的例外（見 DEVELOPMENT.md §6）
 
 **鐵律：新路由必須掛在 `app.js` 的 404 handler 之前。** 掛在之後永遠不會被觸發。
 
+### 3.1 API 路由總覽
+
+下表即 `app.js` 的掛載順序。這些前綴互不重疊，順序不影響分派；**唯一有順序要求的是「全部必須在 404 handler 之前」**。
+
+| 前綴 | 檔案 | 認證 | 說明 |
+|---|---|---|---|
+| `/api/auth` | `src/routes/authRoutes.js` | 公開（`/profile` 需 JWT） | 註冊、登入、取得個人資料 |
+| `/api/admin/products` | `src/routes/adminProductRoutes.js` | JWT + admin（`router.use` 全域上鎖） | 後台商品 CRUD |
+| `/api/admin/orders` | `src/routes/adminOrderRoutes.js` | JWT + admin（`router.use` 全域上鎖） | 後台訂單列表、詳情（唯讀） |
+| `/api/products` | `src/routes/productRoutes.js` | 公開 | 商品分頁列表、詳情 |
+| `/api/cart` | `src/routes/cartRoutes.js` | `dualAuth`（JWT 或 `X-Session-Id`） | 購物車 CRUD |
+| `/api/orders` | `src/routes/orderRoutes.js` | JWT（`router.use(authMiddleware)`） | 建單、列表、詳情、模擬付款 |
+| `/` | `src/routes/pageRoutes.js` | 無（頁面本身公開，資料靠前端 API 取） | 9 條 EJS SSR 頁面路由 |
+
+端點層級的行為（參數、body、錯誤情境）見 [FEATURES.md](./FEATURES.md)。
+
 ---
 
 ## 4. 兩條資料流
@@ -140,15 +156,72 @@ users ────────┬──< orders ──< order_items >── (pro
                      session_id / user_id 二擇一（見 §6）
 ```
 
-| 表 | 主鍵 | 重點約束 |
-|---|---|---|
-| `users` | uuid | `email` UNIQUE；`role` CHECK IN ('user','admin') |
-| `products` | uuid | `price` CHECK > 0；`stock` CHECK >= 0 |
-| `cart_items` | uuid | `session_id` 與 `user_id` **都可為 NULL**，靠應用層二擇一 |
-| `orders` | uuid | `order_no` UNIQUE，格式 `ORD-YYYYMMDD-XXXXX` |
-| `order_items` | uuid | **冗餘保存** `product_name`/`product_price`（下單當下的快照） |
+全部定義在 `src/database.js` 的 `initializeDatabase()`。所有主鍵都是 `TEXT` 存 `uuidv4()` 字串，所有金額都是 `INTEGER`。
 
-`order_items` 刻意複製商品名稱與價格，之後商品改名或改價不影響歷史訂單。
+#### `users`
+
+| 欄位 | 型別 | 約束 |
+|---|---|---|
+| `id` | TEXT | PRIMARY KEY |
+| `email` | TEXT | UNIQUE NOT NULL |
+| `password_hash` | TEXT | NOT NULL（bcrypt） |
+| `name` | TEXT | NOT NULL |
+| `role` | TEXT | NOT NULL DEFAULT `'user'`，CHECK IN (`'user'`, `'admin'`) |
+| `created_at` | TEXT | NOT NULL DEFAULT `datetime('now')` |
+
+#### `products`
+
+| 欄位 | 型別 | 約束 |
+|---|---|---|
+| `id` | TEXT | PRIMARY KEY |
+| `name` | TEXT | NOT NULL |
+| `description` | TEXT | — |
+| `price` | INTEGER | NOT NULL, **CHECK > 0** |
+| `stock` | INTEGER | NOT NULL DEFAULT 0, **CHECK >= 0** |
+| `image_url` | TEXT | — |
+| `created_at` | TEXT | NOT NULL DEFAULT `datetime('now')` |
+| `updated_at` | TEXT | NOT NULL DEFAULT `datetime('now')`（**無自動更新觸發器，要手動 SET**） |
+
+#### `cart_items`
+
+| 欄位 | 型別 | 約束 |
+|---|---|---|
+| `id` | TEXT | PRIMARY KEY |
+| `session_id` | TEXT | 可為 NULL — 訪客購物車用 |
+| `user_id` | TEXT | 可為 NULL — 會員購物車用，FK → `users(id)` |
+| `product_id` | TEXT | NOT NULL, FK → `products(id)` |
+| `quantity` | INTEGER | NOT NULL DEFAULT 1, **CHECK > 0** |
+
+`session_id` 與 `user_id` **都可為 NULL，schema 不強制二擇一**，由應用層的 `getOwnerCondition()` 保證（見 §6）。
+
+#### `orders`
+
+| 欄位 | 型別 | 約束 |
+|---|---|---|
+| `id` | TEXT | PRIMARY KEY |
+| `order_no` | TEXT | UNIQUE NOT NULL，格式 `ORD-YYYYMMDD-XXXXX` |
+| `user_id` | TEXT | NOT NULL, FK → `users(id)` |
+| `recipient_name` | TEXT | NOT NULL |
+| `recipient_email` | TEXT | NOT NULL |
+| `recipient_address` | TEXT | NOT NULL |
+| `total_amount` | INTEGER | NOT NULL（後端從 DB 價格重算，不取請求 body） |
+| `status` | TEXT | NOT NULL DEFAULT `'pending'`，**CHECK IN (`'pending'`, `'paid'`, `'failed'`)** |
+| `created_at` | TEXT | NOT NULL DEFAULT `datetime('now')` |
+
+狀態只有三種，**沒有出貨、完成、取消**。要新增狀態必須改 CHECK 約束並刪 DB 重建（見 §5.3）。
+
+#### `order_items`
+
+| 欄位 | 型別 | 約束 |
+|---|---|---|
+| `id` | TEXT | PRIMARY KEY |
+| `order_id` | TEXT | NOT NULL, FK → `orders(id)` |
+| `product_id` | TEXT | NOT NULL，**無 FK 約束**（商品可被刪除，訂單仍要留存） |
+| `product_name` | TEXT | NOT NULL — 下單當下的快照 |
+| `product_price` | INTEGER | NOT NULL — 下單當下的快照 |
+| `quantity` | INTEGER | NOT NULL |
+
+`product_name` / `product_price` 刻意冗餘複製，商品事後改名或改價不影響歷史訂單。**不要把它們「正規化」掉。**
 
 ### 5.3 沒有 migration 機制
 
@@ -179,6 +252,23 @@ rm -f database.sqlite database.sqlite-shm database.sqlite-wal
 | `dualAuth` | `src/routes/cartRoutes.js:9-46`（區域函式） | 有 Authorization header 就走 JWT（無效直接 401，**不 fallback**）；否則吃 `req.sessionId`；兩者皆無 → 401 | `cartRoutes.js` 逐條路由 |
 | `adminMiddleware` | `src/middleware/adminMiddleware.js` | 只檢查 `req.user.role === 'admin'` | 必須接在 `authMiddleware` 之後 |
 
+### 6.1 JWT 參數
+
+| 項目 | 值 | 位置 |
+|---|---|---|
+| 演算法 | HS256（**驗證時明確指定 `{ algorithms: ['HS256'] }`**，防 alg 混淆） | `authMiddleware.js:16`、`cartRoutes.js:14` |
+| 密鑰 | `process.env.JWT_SECRET`，缺少時 `server.js:7` 直接 `exit(1)` | `.env` |
+| **有效期** | **`7d`** | `authRoutes.js:115`（註冊）、`authRoutes.js:213`（登入） |
+| payload | `{ userId, email, role }` | 同上 |
+| 傳遞方式 | `Authorization: Bearer <token>` | `public/js/auth.js` 的 `getAuthHeaders()` |
+| 前端儲存 | localStorage key `flower_token`（使用者資料在 `flower_user`） | `public/js/auth.js:2-3` |
+
+驗簽通過後**還會查一次 DB 確認使用者仍存在**，使用者被刪除時即使 token 未過期也回 401。
+
+沒有 refresh token、沒有黑名單機制——登出只是前端清掉 localStorage，token 在 7 天內仍然有效。
+
+### 6.2 middleware 分工
+
 Admin 路由的標準寫法（`src/routes/adminProductRoutes.js:10`）：
 
 ```js
@@ -205,30 +295,9 @@ router.use(authMiddleware, adminMiddleware);
 
 ---
 
-## 8. 新增東西時放哪裡
+## 8. 新增東西時放哪裡 · 環境變數
 
-| 要做的事 | 動哪些檔案 |
-|---|---|
-| 新增 API 端點 | ① 對應的 `src/routes/xxxRoutes.js` 加 handler ② 正上方補 `@openapi` 區塊 ③ `tests/xxx.test.js` 補測試 |
-| 新增整組 API 資源 | 新建 `src/routes/xxxRoutes.js` → 在 `app.js` 的 API 區塊 `app.use()`（**務必在 404 之前**）→ 新建測試檔並加進 `vitest.config.js` 的 `sequence.files` |
-| 新增前台頁面 | 三檔同步：`pageRoutes.js` 加 route（帶 `pageScript`）＋ `views/pages/<name>.ejs` ＋ `public/js/pages/<name>.js` |
-| 新增後台頁面 | 同上，但用 `renderAdmin()`、樣板放 `views/pages/admin/`，並在 `views/partials/admin-sidebar.ejs` 補選單 |
-| 新增可重用的請求處理邏輯 | `src/middleware/` |
-| 修改資料表 | `src/database.js` 的 `initializeDatabase()`，改完刪 `database.sqlite` 重建（見 §5.3） |
-| 新增色票／樣式 token | `public/css/input.css` 的 `@theme`，然後 `npm run css:build` |
-| 跨路由共用的商業邏輯 | **目前沒有 `services/` 層**。單一路由檔內用區域 `function`（如 `cartRoutes.js` 的 `dualAuth`）；真的需要跨檔共用時再新建 `src/services/`，屬架構決策，先跟 user 確認 |
+這兩節已移到 [DEVELOPMENT.md](./DEVELOPMENT.md)，以維持「一條規則只住一個檔案」：
 
----
-
-## 9. 環境變數
-
-`.env`（由 `.env.example` 複製）在 `app.js:1` 經 `dotenv` 載入。
-
-| 變數 | 用途 | 缺少時 |
-|---|---|---|
-| `JWT_SECRET` | 簽發／驗證 token | **`server.js:7` 直接 `process.exit(1)`** |
-| `PORT` | 監聽埠 | 預設 3001 |
-| `FRONTEND_URL` | CORS 允許來源 | 預設 `http://localhost:3001` |
-| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | 種子管理員帳密 | 預設 `admin@hexschool.com` / `12345678` |
-| `BASE_URL` | 宣告於 `.env.example`，**程式碼未引用** | — |
-| `ECPAY_*` | 宣告於 `.env.example`，**程式碼完全未引用** | — |
+- **新增 API / middleware / 頁面 / 資料表的步驟** → `DEVELOPMENT.md` §17
+- **環境變數表** → `DEVELOPMENT.md` §18
