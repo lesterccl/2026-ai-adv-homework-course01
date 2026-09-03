@@ -93,7 +93,8 @@ errorHandler       只兜底未預期的例外（見 DEVELOPMENT.md §6）
 | `/api/admin/orders` | `src/routes/adminOrderRoutes.js` | JWT + admin（`router.use` 全域上鎖） | 後台訂單列表、詳情（唯讀） |
 | `/api/products` | `src/routes/productRoutes.js` | 公開 | 商品分頁列表、詳情 |
 | `/api/cart` | `src/routes/cartRoutes.js` | `dualAuth`（JWT 或 `X-Session-Id`） | 購物車 CRUD |
-| `/api/orders` | `src/routes/orderRoutes.js` | JWT（`router.use(authMiddleware)`） | 建單、列表、詳情、模擬付款 |
+| `/api/orders` | `src/routes/orderRoutes.js` | JWT（`router.use(authMiddleware)`） | 建單、列表、詳情、建立綠界付款 |
+| `/api/payments` | `src/routes/paymentRoutes.js` | **無**（綠界呼叫，靠 CheckMacValue 驗簽） | 綠界 ReturnURL 回調、OrderResultURL 導回 |
 | `/` | `src/routes/pageRoutes.js` | 無（頁面本身公開，資料靠前端 API 取） | 9 條 EJS SSR 頁面路由 |
 
 端點層級的行為（參數、body、錯誤情境）見 [FEATURES.md](./FEATURES.md)。
@@ -112,7 +113,8 @@ request
   → { data, error, message }
 ```
 
-沒有 service 層、沒有 repository 層。**SQL 直接寫在路由 handler 裡**，這是刻意的現況，不是遺漏。
+沒有 repository 層，**SQL 直接寫在路由 handler 裡**，這是刻意的現況。
+`src/services/` 目前只放第三方整合的純函式（`ecpay.js`：簽章、參數組裝），**不放資料存取**。
 
 ### 4.2 頁面流（兩段式 render）
 
@@ -206,6 +208,10 @@ users ────────┬──< orders ──< order_items >── (pro
 | `recipient_address` | TEXT | NOT NULL |
 | `total_amount` | INTEGER | NOT NULL（後端從 DB 價格重算，不取請求 body） |
 | `status` | TEXT | NOT NULL DEFAULT `'pending'`，**CHECK IN (`'pending'`, `'paid'`, `'failed'`)** |
+| `merchant_trade_no` | TEXT | UNIQUE — 送綠界的交易編號（英數 ≤20 碼，永久唯一）。建立付款時才寫入 |
+| `ecpay_trade_no` | TEXT | 綠界回傳的交易序號 |
+| `payment_type` | TEXT | 綠界回傳的付款方式（如 `Credit_CreditCard`） |
+| `paid_at` | TEXT | 付款完成時間（綠界的 `PaymentDate`） |
 | `created_at` | TEXT | NOT NULL DEFAULT `datetime('now')` |
 
 狀態只有三種，**沒有出貨、完成、取消**。要新增狀態必須改 CHECK 約束並刪 DB 重建（見 §5.3）。

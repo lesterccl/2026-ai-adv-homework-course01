@@ -23,12 +23,14 @@
 | 8 | 建立訂單 | `POST /api/orders` | `/checkout` · `checkout.ejs` · `checkout.js` | `orders.test.js` | ✅ 完整 |
 | 9 | 訂單列表 | `GET /api/orders` | `/orders` · `orders.ejs` · `orders.js` | `orders.test.js` | ✅ 完整 |
 | 10 | 訂單詳情 | `GET /api/orders/:id` | `/orders/:id` · `order-detail.ejs` · `order-detail.js` | `orders.test.js` | ✅ 完整 |
-| 11 | 模擬付款 | `PATCH /api/orders/:id/pay` | 訂單詳情頁 · `order-detail.js:31` | **無** | ⚠️ 部分（零測試） |
+| 11 | 綠界付款（建立） | `POST /api/orders/:id/payment` | 結帳頁自動跳轉 · 訂單詳情頁「前往付款」 | `payment.test.js` | ✅ 完整 |
+| 11a | 綠界 ReturnURL 回調 | `POST /api/payments/ecpay/callback` | 無（綠界伺服器呼叫） | `payment.test.js` | ✅ 完整 |
+| 11b | 綠界 OrderResultURL 導回 | `POST /api/payments/ecpay/result` | 302 導向訂單詳情頁 | `payment.test.js` | ✅ 完整 |
 | 12 | 後台商品 CRUD | `GET/POST/PUT/DELETE /api/admin/products` | `/admin/products` · `admin/products.ejs` · `admin-products.js` | `adminProducts.test.js` | ✅ 完整 |
 | 13 | 後台訂單列表 | `GET /api/admin/orders` | `/admin/orders` · `admin/orders.ejs` · `admin-orders.js` | `adminOrders.test.js` | ✅ 完整 |
 | 14 | 後台訂單詳情 | `GET /api/admin/orders/:id` | 同上頁 | `adminOrders.test.js` | ✅ 完整 |
 | 15 | 後台修改訂單狀態 | **無** | **無** | 無 | ❌ 未實作 |
-| 16 | 真實金流串接 | **無** | — | 無 | ❌ 未實作（§7） |
+| 16 | 真實金流串接 | 見 #11 / #11a / #11b | 綠界 AIO 信用卡一次付清 | `ecpay.test.js` · `payment.test.js` | ✅ 完整 |
 | 17 | 登入時合併訪客購物車 | **無** | — | 無 | ❌ 未實作（§7） |
 
 ---
@@ -81,11 +83,13 @@
 | `POST /api/orders` | JWT | 驗收件人三欄 + email 格式 → 取購物車（空則 400 `CART_EMPTY`）→ 檢查每項庫存（不足則 400 `STOCK_INSUFFICIENT` 並列出品名）→ **交易內**建訂單、建 order_items、扣庫存、清空購物車 |
 | `GET /api/orders` | JWT | 自己的訂單列表，**無分頁** |
 | `GET /api/orders/:id` | JWT | 訂單詳情，含品項；他人訂單回 404 |
-| `PATCH /api/orders/:id/pay` | JWT | body `{ action: 'success' \| 'fail' }` → 狀態改 `paid` / `failed`。非 `pending` 回 400 `INVALID_STATUS` |
+| `POST /api/orders/:id/payment` | JWT | 產生綠界 AIO 表單參數（含 CheckMacValue）並回 `{ action, params }`，前端以 form POST 跳轉綠界。非 `pending` 回 400 `INVALID_STATUS`，他人訂單回 404。同一訂單重試會沿用既有的 `merchant_trade_no` |
 
 - 訂單編號格式 `ORD-YYYYMMDD-XXXXX`（`orderRoutes.js:10-15`）。
 - `order_items` 保存下單當下的 `product_name` / `product_price` 快照，商品事後改名改價不影響歷史訂單。
 - 訂單狀態只有三種：`pending` / `paid` / `failed`（DB CHECK 約束）。**沒有出貨、完成、取消等狀態。**
+- 狀態只由綠界回調改變（`POST /api/payments/ecpay/callback`），**沒有任何端點可由使用者直接指定付款結果**。
+- 金流欄位：`merchant_trade_no`（送綠界的交易編號，英數 ≤20 碼）、`ecpay_trade_no`、`payment_type`、`paid_at`。
 
 ---
 
@@ -127,11 +131,37 @@ body 欄位為 `name` / `description` / `price` / `stock` / `image_url`（注意
 
 `src/routes/authRoutes.js` 全檔沒有任何 `session_id` / `cart_items` 的引用；`sessionMiddleware` 也只是把 header 塞進 `req.sessionId`，沒有合併邏輯的呼叫點。使用者體驗上這是明顯的斷點。
 
-### 7.3 付款是純本地模擬
+### 7.3 綠界金流（已完成，含真實交易實測）
 
-`.env.example` 宣告了 `ECPAY_MERCHANT_ID` / `ECPAY_HASH_KEY` / `ECPAY_HASH_IV` / `ECPAY_ENV`，但 `grep -ri ecpay src/ public/ views/ tests/` **零匹配**——程式碼完全沒有引用。
+`ECPAY_*` 與 `BASE_URL` 環境變數現已實際使用，串接的是**綠界 AIO 信用卡一次付清**。
 
-實際付款流程是前端在訂單詳情頁呼叫 `PATCH /api/orders/:id/pay`（`public/js/pages/order-detail.js:31`），後端直接把 status 改成 `paid` 或 `failed`，沒有任何金流串接、沒有 CheckMacValue、沒有回調端點。
+#### 已實測驗證（2026-09-03，綠界測試環境）
+
+| 環節 | 驗證方式 | 結果 |
+|---|---|---|
+| CheckMacValue 產生 | 綠界官方 7 個測試向量（`tests/fixtures/`）+ 真實閘道接受表單並開出付款頁 | ✅ |
+| 參數合法性 | 綠界收單，無退件 | ✅ |
+| **真實信用卡交易** | 測試卡付款成功，`TradeNo 2609031003504464`、`TradeStatus 1`、NT$1,680 | ✅ |
+| CheckMacValue 驗證 | 對綠界**實際簽出**的 QueryTradeInfo 回應驗簽，3 次皆通過 | ✅ |
+| 回調處理 | 以綠界回傳的真實交易資料組回調打本機端點 → 回 `1\|OK`，`status`/`ecpay_trade_no`/`payment_type`/`paid_at` 正確落地 | ✅ |
+| 冪等性 | 同一筆重送，第二次 no-op 且仍回 `1\|OK` | ✅ |
+| **回調的網路送達** | localtunnel TLS 握手 14.5–17.3 秒，超過綠界 `ReturnURL` 的 10 秒上限 | ❌ **未驗證** |
+
+#### 唯一未驗證的環節
+
+**綠界伺服器主動連線到本站的那一段網路傳輸**，從未實際發生過。
+
+證據：綠界含重送共 4 次嘗試期間，server log 完全沒有任何進站請求（只有啟動那一行）。連線在 TLS 握手階段就被綠界放棄，**本站的回調程式碼從未被執行**。
+
+這是隧道工具的延遲問題，不是程式碼問題——回調處理邏輯本身已由上表最後三列與 17 個整合測試涵蓋。要補完這一格，需要低延遲的公開網址（ngrok 或正式部署），見 `docs/TESTING.md`。
+
+#### 未實作
+
+退款（DoAction）、定期定額、分期、ATM／超商代碼／條碼（需另外實作 `PaymentInfoURL`）、電子發票、物流。
+
+#### 已知的營運缺口
+
+綠界回調若因網路問題未送達，訂單會停在 `pending` 而錢已收（本次實測就發生了）。綠界官方指南建議用 `QueryTradeInfo` 查詢 API 對帳補正，**本專案尚未把它做成正式功能**。
 
 ### 7.4 `GET /api/auth/profile` 前端未使用
 

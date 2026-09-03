@@ -13,6 +13,17 @@ paths:
 - `message` 一律繁體中文、**不加句號**、不用「您/你」。成功用「N成功」或「成功」；失敗用直述句（「商品不存在」「庫存不足」）。
 - 訊息中的欄位名保留原文：寫「price 必須為正整數」，不寫「價格必須為正整數」。
 
+## 回應格式的唯一例外：綠界回調
+
+`src/routes/paymentRoutes.js` 的兩支端點**不套用三欄格式**，因為綠界規定了回應形狀：
+
+- `POST /api/payments/ecpay/callback`（ReturnURL）→ 回**純文字** `1|OK`，HTTP 200。格式錯一個字元（帶引號、小寫 ok、多換行）綠界就會重送最多 4 次。拒絕時回 `0|<reason>`。
+- `POST /api/payments/ecpay/result`（OrderResultURL）→ 回 **302 導向**，不回 body。
+
+這兩支也**不掛 `authMiddleware`**（綠界不會帶 JWT），身分改由 `CheckMacValue` 驗簽擔保。
+驗簽必須用 timing-safe 比較，且**驗簽失敗一律拒絕、不更新任何狀態**。
+回調必須**冪等**：重複收到同一筆通知要是 no-op 且仍回 `1|OK`。
+
 ## 欄位命名
 - 回應欄位**直接沿用 DB 的 snake_case，不做轉換**（`image_url`、`created_at`、`order_no`）。既有測試斷言的是 snake_case，轉成 camelCase 會讓測試全紅。
 - 唯一的 camelCase 是框架層固定鍵：`data` / `error` / `message` / `pagination.totalPages`。

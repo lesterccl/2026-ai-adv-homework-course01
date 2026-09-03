@@ -2,6 +2,7 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../database');
 const authMiddleware = require('../middleware/authMiddleware');
+const ecpay = require('../services/ecpay');
 
 const router = express.Router();
 
@@ -311,9 +312,9 @@ router.get('/:id', (req, res) => {
 
 /**
  * @openapi
- * /api/orders/{id}/pay:
- *   patch:
- *     summary: 模擬付款（更新訂單付款狀態）
+ * /api/orders/{id}/payment:
+ *   post:
+ *     summary: 建立綠界付款，取得 AIO 表單參數
  *     tags: [Orders]
  *     security:
  *       - bearerAuth: []
@@ -323,20 +324,9 @@ router.get('/:id', (req, res) => {
  *         required: true
  *         schema:
  *           type: string
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [action]
- *             properties:
- *               action:
- *                 type: string
- *                 enum: [success, fail]
  *     responses:
  *       200:
- *         description: 付款狀態更新成功
+ *         description: 成功
  *         content:
  *           application/json:
  *             schema:
@@ -345,74 +335,57 @@ router.get('/:id', (req, res) => {
  *                 data:
  *                   type: object
  *                   properties:
- *                     id:
+ *                     action:
  *                       type: string
- *                     order_no:
- *                       type: string
- *                     total_amount:
- *                       type: integer
- *                     status:
- *                       type: string
- *                     created_at:
- *                       type: string
- *                     items:
- *                       type: array
- *                       items:
- *                         type: object
- *                         properties:
- *                           product_name:
- *                             type: string
- *                           product_price:
- *                             type: integer
- *                           quantity:
- *                             type: integer
+ *                       description: 綠界 AioCheckOut 端點，前端將 params 以 form POST 送到此網址
+ *                     params:
+ *                       type: object
+ *                       description: 綠界表單參數，已含 CheckMacValue
  *                 error:
  *                   type: string
  *                   nullable: true
  *                 message:
  *                   type: string
  *       400:
- *         description: action 無效或訂單狀態不是 pending
+ *         description: 訂單狀態不是 pending
  *       404:
  *         description: 訂單不存在
  */
-router.patch('/:id/pay', (req, res) => {
-  const { action } = req.body;
+router.post('/:id/payment', (req, res) => {
   const userId = req.user.userId;
-
-  const actionMap = { success: 'paid', fail: 'failed' };
-  if (!action || !actionMap[action]) {
-    return res.status(400).json({
-      data: null,
-      error: 'VALIDATION_ERROR',
-      message: 'action 必須為 success 或 fail'
-    });
-  }
-
   const order = db.prepare('SELECT * FROM orders WHERE id = ? AND user_id = ?').get(req.params.id, userId);
+
   if (!order) {
     return res.status(404).json({ data: null, error: 'NOT_FOUND', message: '訂單不存在' });
   }
 
-  if (order.status !== 'pending') {
+  if (order.status === 'paid') {
     return res.status(400).json({
       data: null,
       error: 'INVALID_STATUS',
-      message: '訂單狀態不是 pending，無法付款'
+      message: '訂單已付款，無法重複付款'
     });
   }
 
-  const newStatus = actionMap[action];
-  db.prepare('UPDATE orders SET status = ? WHERE id = ?').run(newStatus, order.id);
+  const items = db.prepare(
+    'SELECT product_name, product_price, quantity FROM order_items WHERE order_id = ?'
+  ).all(order.id);
 
-  const updated = db.prepare('SELECT * FROM orders WHERE id = ?').get(order.id);
-  const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(order.id);
+  // MerchantTradeNo 永久唯一，同一組送第二次會被綠界以 10100050 拒絕
+  // （綠界付款頁逾時後就會發生），所以每次發起付款都產生新的一組。
+  // 舊交易編號的遲到回調仍能靠 CustomField1 帶回的訂單 id 對回來（見 paymentRoutes）。
+  const merchantTradeNo = ecpay.generateMerchantTradeNo();
+  db.prepare('UPDATE orders SET merchant_trade_no = ?, status = ? WHERE id = ?')
+    .run(merchantTradeNo, 'pending', order.id);
+
+  const params = ecpay.buildPaymentParams({ ...order, merchant_trade_no: merchantTradeNo }, items);
 
   res.json({
-    data: { ...updated, items },
+    data: { action: ecpay.getGatewayUrl(), params },
     error: null,
-    message: action === 'success' ? '付款成功' : '付款失敗'
+    message: '付款參數建立成功'
   });
 });
+
 
 module.exports = router;

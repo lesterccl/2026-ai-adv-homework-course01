@@ -346,12 +346,13 @@ async function loadCart() {
 |---|---|
 | **新增 API 端點** | ① 在對應的 `src/routes/xxxRoutes.js` 加 handler（箭頭函式）② 正上方緊貼補 `@openapi` 區塊 ③ `tests/xxx.test.js` 補測試 ④ `npm run openapi` 確認產得出來 |
 | **新增整組 API 資源** | ① 新建 `src/routes/xxxRoutes.js`，`const router = express.Router()` ② 在 `app.js` 的 API 區塊 `app.use('/api/xxx', require('./src/routes/xxxRoutes'))`（**務必在 404 handler 之前**）③ 新建 `tests/xxx.test.js` ④ **把新測試檔加進 `vitest.config.js` 的 `sequence.files`** |
+| **第三方整合（簽章、外部 API 參數組裝）** | 放 `src/services/`（目前只有 `ecpay.js`）。**純函式，不碰 DB**，這樣才能獨立單元測試；資料存取仍留在路由 handler |
 | **新增 middleware** | ① 新建 `src/middleware/xxxMiddleware.js`，用具名 `function` 宣告、`module.exports = xxxMiddleware` ② 全域的掛在 `app.js`；單一路由群組的用 `router.use()` ③ 需要 `req.user` 的必須掛在 `authMiddleware` 之後 |
 | **新增資料表 / 欄位** | ① 改 `src/database.js` 的 `initializeDatabase()`（`CREATE TABLE IF NOT EXISTS`、加 CHECK 約束）② **刪 DB 重建**：`rm -f database.sqlite database.sqlite-shm database.sqlite-wal` ③ 沒有 migration 機制，既有 DB 不會自動更新 |
 | **新增前台頁面** | 三檔同步：`pageRoutes.js` 加 route（用 `renderFront()`、帶 `pageScript`）＋ `views/pages/<name>.ejs` ＋ `public/js/pages/<name>.js` |
 | **新增後台頁面** | 同上但用 `renderAdmin()`、樣板放 `views/pages/admin/`，並在 `views/partials/admin-sidebar.ejs` 補選單 |
 | **新增色票 / 樣式 token** | 改 `public/css/input.css` 的 `@theme`，然後 `npm run css:build`。**不要改 `output.css`** |
-| **跨路由共用的商業邏輯** | **目前沒有 `services/` 層**。單一路由檔內用區域 `function`（如 `cartRoutes.js` 的 `dualAuth`）；真要跨檔共用再新建 `src/services/` —— 屬架構決策，先跟 user 確認 |
+| **跨路由共用的商業邏輯** | 單一路由檔內用區域 `function`（如 `cartRoutes.js` 的 `dualAuth`）。`src/services/` 目前**只放第三方整合的純函式**，不是通用 service 層——要把商業邏輯或資料存取搬進去屬架構決策，先跟 user 確認 |
 
 ---
 
@@ -367,8 +368,9 @@ async function loadCart() {
 | `ADMIN_EMAIL` | 種子管理員帳號 | 選填 | `admin@hexschool.com` |
 | `ADMIN_PASSWORD` | 種子管理員密碼 | 選填 | `12345678` |
 | `NODE_ENV` | 設為 `test` 時 bcrypt saltRounds 降為 1 加速測試 | 選填 | 未設（saltRounds = 10） |
-| `BASE_URL` | 宣告於 `.env.example`，**程式碼未引用** | 無作用 | — |
-| `ECPAY_MERCHANT_ID` / `ECPAY_HASH_KEY` / `ECPAY_HASH_IV` / `ECPAY_ENV` | 宣告於 `.env.example`，**程式碼完全未引用**（付款是本地模擬） | 無作用 | — |
+| `BASE_URL` | 綠界回調網址的前綴（`ReturnURL` / `OrderResultURL` / `ClientBackURL`）。**綠界不接受 localhost，也只支援 port 80/443**，本機測試需填 localtunnel / ngrok 給的公開網址 | 串接綠界時必要 | `http://localhost:3001`（僅單元測試可用） |
+| `ECPAY_MERCHANT_ID` / `ECPAY_HASH_KEY` / `ECPAY_HASH_IV` | 綠界特店編號與簽章金鑰，`src/services/ecpay.js` 使用 | 選填 | 綠界公開測試帳號 `3002607` / `pwFHCqoQZGmho4w6` / `EkRm7iFT261dpevs` |
+| `ECPAY_ENV` | `staging` → `payment-stage.ecpay.com.tw`；`production` → `payment.ecpay.com.tw` | 選填 | `staging` |
 
 `.env` 已 gitignore 並列入 `.claude/settings.json` 的 deny 規則，**agent 讀不到也寫不了**。需要知道有哪些變數請讀 `.env.example`。
 

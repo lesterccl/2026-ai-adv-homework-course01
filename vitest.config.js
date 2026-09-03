@@ -6,10 +6,12 @@ export default defineConfig({
     fileParallelism: false,
     sequence: {
       files: [
+        'tests/ecpay.test.js',
         'tests/auth.test.js',
         'tests/products.test.js',
         'tests/cart.test.js',
         'tests/orders.test.js',
+        'tests/payment.test.js',
         'tests/adminProducts.test.js',
         'tests/adminOrders.test.js',
       ],

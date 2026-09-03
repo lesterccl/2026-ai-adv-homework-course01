@@ -52,7 +52,10 @@ function initializeDatabase() {
       recipient_address TEXT NOT NULL,
       total_amount INTEGER NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'paid', 'failed')),
-
+      merchant_trade_no TEXT UNIQUE,
+      ecpay_trade_no TEXT,
+      payment_type TEXT,
+      paid_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (user_id) REFERENCES users(id)
     );

@@ -30,13 +30,13 @@ npx vitest                                        # watch 模式（設定檔沒�
 | 後果 | 設定 |
 |---|---|
 | 多檔平行跑會互相污染 | `fileParallelism: false` — 一次只跑一個檔案 |
-| 檔案執行順序會影響結果 | `sequence.files` 寫死六個檔案的順序 |
+| 檔案執行順序會影響結果 | `sequence.files` 寫死八個檔案的順序 |
 | 首次跑要建表 + 種子，較慢 | `hookTimeout: 10000` |
 
 寫死的順序是：
 
 ```
-auth → products → cart → orders → adminProducts → adminOrders
+ecpay → auth → products → cart → orders → payment → adminProducts → adminOrders
 ```
 
 ### 因此你必須
@@ -45,6 +45,7 @@ auth → products → cart → orders → adminProducts → adminOrders
 - ❌ **不要**用固定的 email / 商品名稱等唯一值——第二次跑就會撞 409。
 - ✅ 新增測試檔時，**必須把檔名加進 `vitest.config.js` 的 `sequence.files`**，否則它的執行順序不受控。
 - ✅ 假設 DB 裡已經有前次執行留下的資料。斷言「列表長度剛好是 N」這種寫法必壞，改用 `toBeGreaterThan(0)`。
+- ⚠️ **會大量建立訂單的測試檔要自建高庫存商品**，不要消耗種子商品的庫存——`payment.test.js` 每輪建十餘張訂單，用種子商品會在第二輪把庫存抽乾，讓其他測試檔拿到 `STOCK_INSUFFICIENT`（見 `payment.test.js` 的 `beforeAll`）。
 - ✅ 需要乾淨環境時，手動刪檔重建：
   ```bash
   rm -f database.sqlite database.sqlite-shm database.sqlite-wal && npm test
@@ -54,15 +55,17 @@ auth → products → cart → orders → adminProducts → adminOrders
 
 ## 3. 現況
 
-6 個檔案、32 個 `it`：
+8 個檔案、70 個 `it`：
 
 | 檔案 | describe | 案例數 |
 |---|---|---|
+| `tests/ecpay.test.js` | `ECPay CheckMacValue` 等 5 組 | 24 |
 | `tests/auth.test.js` | `Auth API` | 6 |
 | `tests/products.test.js` | `Products API` | 4 |
 | `tests/cart.test.js` | `Cart API` | 6 |
 | `tests/orders.test.js` | `Orders API` | 6 |
 | `tests/adminProducts.test.js` | `Admin Products API` | 6 |
+| `tests/payment.test.js` | `Payment API` | 14 |
 | `tests/adminOrders.test.js` | `Admin Orders API` | 4 |
 
 失敗路徑已有覆蓋：401（`auth.test.js:75`、`orders.test.js:64`）、403（`adminProducts.test.js:74`、`adminOrders.test.js:74`）、404（`products.test.js:42`、`cart.test.js:88`、`orders.test.js:105`）、409（重複 email）、400（空購物車 `orders.test.js:48`）。
@@ -194,13 +197,43 @@ await request(app).post('/api/cart').set('X-Session-Id', sessionId).send({ produ
 
 ---
 
+## 7.5 綠界金流的本機 E2E
+
+自動化測試（`ecpay.test.js` + `payment.test.js`）**不需要網路**，全部離線可跑。
+
+要做**真實交易**的 E2E 才需要公開網址：
+
+```bash
+npm run css:build
+JWT_SECRET=<隨機字串> BASE_URL=<公開網址> ECPAY_ENV=staging node server.js
+```
+
+綠界測試卡：`4311-9522-2222-2222`／效期任意未來／CVV 任意三碼／3D 驗證碼 `1234`。
+測試環境**不會有任何實際扣款**。
+
+### 隧道工具的硬性要求
+
+綠界的 `ReturnURL` / `OrderResultURL` **不支援 localhost，且僅支援 port 80/443**，所以本機必須開隧道。
+但隧道**延遲必須夠低**：
+
+> `ReturnURL` 有 **10 秒逾時**（逾時視為失敗，綠界重送最多 4 次）。
+
+**實測紀錄（2026-09-03）**：localtunnel 的 TLS 握手需 14.5–17.3 秒，**每一次回調都在握手階段就被綠界放棄**，連同重送共 4 次全數未落地，server log 零進站請求。localtunnel 不可用於綠界回調測試，請改用 ngrok。
+
+### 收不到回調時怎麼確認交易結果
+
+用綠界的 `QueryTradeInfo/V5` 反查（server-to-server，不需隧道）。
+`TradeStatus` 為 `1` 即已付款。實作可參考 `src/services/ecpay.js` 的簽章函式。
+
+---
+
 ## 8. 測試缺口
 
 以下行為已實作但**完全沒有測試**。要補測試的話從這裡挑，補完回來把該列劃掉。
 
 | # | 缺口 | 位置 |
 |---|---|---|
-| 1 | `PATCH /api/orders/:id/pay` **整支端點零測試**（`success` / `fail` 兩種 action、非 pending 的 400 `INVALID_STATUS`、他人訂單的 404 全都沒測） | `orderRoutes.js:379-415` |
+| ~~1~~ | ~~付款端點零測試~~ — **已補**：`tests/payment.test.js` 涵蓋建立付款參數、成功/失敗回調、驗簽失敗、金額不符、冪等重送、他人訂單 404、非 pending 400、OrderResultURL 302 | — |
 | 2 | 建立訂單時的庫存不足分支 | `orderRoutes.js:119-127` |
 | 3 | 加入購物車時的庫存不足（`STOCK_INSUFFICIENT`） | `cartRoutes.js` |
 | 4 | 購物車 PATCH / DELETE 對不存在的 item 回 404 | `cartRoutes.js:291,356` |

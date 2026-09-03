@@ -24,25 +24,16 @@ createApp({
       cancel: { text: '付款已取消。', cls: 'bg-apricot/10 text-apricot border border-apricot/20' },
     };
 
-    async function simulatePay(action) {
+    async function goToPayment() {
       if (!order.value || paying.value) return;
       paying.value = true;
       try {
-        const res = await apiFetch('/api/orders/' + order.value.id + '/pay', {
-          method: 'PATCH',
-          body: JSON.stringify({ action })
-        });
-        order.value = res.data;
-        paymentResult.value = action === 'success' ? 'success' : 'failed';
+        await startEcpayPayment(order.value.id);
       } catch (e) {
-        Notification.show('付款處理失敗', 'error');
-      } finally {
+        Notification.show(e?.data?.message || '無法前往付款', 'error');
         paying.value = false;
       }
     }
-
-    function handlePaySuccess() { simulatePay('success'); }
-    function handlePayFail() { simulatePay('fail'); }
 
     onMounted(async function () {
       try {
@@ -55,6 +46,6 @@ createApp({
       }
     });
 
-    return { order, loading, paying, paymentResult, statusMap, paymentMessages, handlePaySuccess, handlePayFail };
+    return { order, loading, paying, paymentResult, statusMap, paymentMessages, goToPayment };
   }
 }).mount('#app');
